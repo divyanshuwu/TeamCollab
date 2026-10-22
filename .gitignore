@@ -35,3 +35,5 @@ Thumbs.db
 *.log
 *.sqlite3
 *.db
+# Aiven database CA certificate
+backend/ca.pem

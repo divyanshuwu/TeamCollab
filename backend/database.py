@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, URL
@@ -17,7 +18,21 @@ database_url = URL.create(
 )
 
 # Create database engine
-engine = create_engine(database_url, echo=True)
+ssl_ca = os.getenv("DB_SSL_CA")
+
+if ssl_ca and not os.path.isabs(ssl_ca):
+    ssl_ca = str(Path(__file__).resolve().parent / ssl_ca)
+
+connect_args = {}
+
+if ssl_ca:
+    connect_args["ssl"] = {"ca": ssl_ca}
+
+engine = create_engine(
+    database_url,
+    echo=True,
+    connect_args=connect_args,
+)
 
 # Create database sessions
 SessionLocal = sessionmaker(
