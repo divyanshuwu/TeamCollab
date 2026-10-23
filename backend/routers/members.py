@@ -4,11 +4,12 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import ProjectDB, ProjectMemberDB, UserDB
 from schemas import ProjectMemberCreate, ProjectMemberResponse
-from routers.auth import get_current_user
+from routers.auth import enforce_user_rate_limit, get_current_user
 
 router = APIRouter(
     prefix="/projects",
     tags=["Project Members"],
+    dependencies=[Depends(enforce_user_rate_limit)],
 )
 
 @router.post("/{project_id}/members", status_code=201)

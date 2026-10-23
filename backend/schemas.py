@@ -36,6 +36,10 @@ class UserLogin(BaseModel):
     password: str
 
 
+class RegistrationAttempt(BaseModel):
+    email: EmailStr
+
+
 class ProjectMemberCreate(BaseModel):
     user_id: int
     role: str = "member"

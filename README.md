@@ -24,6 +24,14 @@ Supabase Auth does not import the existing Argon2 passwords. Users must register
 
 Set `DATABASE_URL` and `JWT_SECRET_KEY`, install `backend/requirements.txt`, apply the schema, then start the API with `uvicorn main:app --app-dir backend --reload`. In `frontend/.env.local`, set `VITE_API_BASE_URL=http://127.0.0.1:8000` and the Supabase variables from `frontend/.env.example` and run `npm run dev` from `frontend`.
 
+## API rate limits and database access
+
+FastAPI applies shared, database-backed limits in two-hour windows. Defaults are 300 authenticated reads and 60 authenticated writes per user, 3 signup attempts per email and client IP, and 10 login attempts per email and client IP. The counts are configurable in `backend/.env` or the Vercel backend environment with `DB_READ_LIMIT_2H`, `DB_WRITE_LIMIT_2H`, `REGISTRATION_LIMIT_2H`, and `LOGIN_LIMIT_2H`. Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset-After`; over-limit responses return 429 and `Retry-After`.
+
+Before deploying this code, apply `supabase/migrations/20261023000000_api_rate_limits.sql` in the Supabase SQL Editor. If using Aiven as the active/fallback database, also apply `backend/aiven_rate_limits.sql` there. Rate limiting fails closed if the table is missing or its counter cannot be written. Set `RATE_LIMIT_HMAC_KEY` to a private random value (or use the existing private `JWT_SECRET_KEY` fallback); the counters store keyed hashes rather than emails or user IDs.
+
+The Vite client has no database credentials or direct table access; it sends app data requests to FastAPI. Protected API routes verify the bearer token before opening a database session, and project/task/member queries enforce ownership or membership checks. The migration enables RLS and revokes Supabase client-role access to the app tables and rate-limit table; FastAPI uses the private server-side database connection. Signup through the website reserves an API registration attempt before calling Supabase Auth. Direct calls to Supabase Auth remain subject to Supabase's own rate limits, including its separate email-sending quota.
+
 ## Supabase browser client
 
 The Vite frontend has `@supabase/supabase-js` configured in `frontend/src/utils/supabase.js`. For local development, the provided project URL and publishable key are in the ignored `frontend/.env.local`; copy the variable names from `frontend/.env.example` into Vercel's frontend environment settings as well.

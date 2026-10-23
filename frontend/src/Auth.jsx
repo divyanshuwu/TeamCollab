@@ -32,6 +32,10 @@ function Auth({ onLogin }) {
       if (supabase) {
         try {
           if (isRegister) {
+            await apiRequest('/auth/registration-attempt', {
+              method: 'POST',
+              body: JSON.stringify({ email }),
+            })
             const { data, error: signUpError } = await supabase.auth.signUp({
               email,
               password,

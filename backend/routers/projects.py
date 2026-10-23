@@ -6,11 +6,12 @@ from sqlalchemy import case, func
 from database import get_db
 from models import ProjectDB, TaskDB, UserDB
 from schemas import ProjectCreate, ProjectResponse
-from routers.auth import get_current_user
+from routers.auth import enforce_user_rate_limit, get_current_user
 
 router = APIRouter(
     prefix="/projects",
-    tags=["Projects"]
+    tags=["Projects"],
+    dependencies=[Depends(enforce_user_rate_limit)],
 )
 
 

@@ -1,16 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from database import get_db
 from models import UserDB
-from schemas import UserCreate, UserResponse, UserLogin
+from schemas import UserCreate, UserResponse, UserLogin, RegistrationAttempt
 from security import (
     hash_password, verify_password, create_access_token, verify_access_token,
     verify_supabase_access_token,
 )
 from jwt.exceptions import InvalidTokenError, PyJWKClientError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from rate_limits import (
+    LOGIN_LIMIT,
+    READ_LIMIT,
+    REGISTRATION_LIMIT,
+    WRITE_LIMIT,
+    consume_limit,
+)
 
 router = APIRouter(
     prefix="/auth",
@@ -25,11 +32,17 @@ router = APIRouter(
 )
 def register_user(
     user: UserCreate,
-    db: Session = Depends(get_db)
+    request: Request,
+    db: Session = Depends(get_db),
 ):
+    email = str(user.email).strip().lower()
+    ip_address = request.client.host if request.client else "unknown"
+    consume_limit(db, "registration-email", email, REGISTRATION_LIMIT)
+    consume_limit(db, "registration-ip", ip_address, REGISTRATION_LIMIT)
+
     new_user = UserDB(
         name=user.name,
-        email=str(user.email),
+        email=email,
         password_hash=hash_password(user.password)
     )
 
@@ -48,13 +61,32 @@ def register_user(
     return new_user
 
 
+@router.post("/registration-attempt", status_code=204)
+def authorize_registration_attempt(
+    attempt: RegistrationAttempt,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Reserve a signup attempt before the browser asks Supabase to email."""
+    email = str(attempt.email).strip().lower()
+    ip_address = request.client.host if request.client else "unknown"
+    consume_limit(db, "supabase-registration-email", email, REGISTRATION_LIMIT)
+    consume_limit(db, "supabase-registration-ip", ip_address, REGISTRATION_LIMIT)
+
+
 @router.post("/login")
 def login_user(
     user: UserLogin,
-    db: Session = Depends(get_db)
+    request: Request,
+    db: Session = Depends(get_db),
 ):
+    email = str(user.email).strip().lower()
+    ip_address = request.client.host if request.client else "unknown"
+    consume_limit(db, "login-email", email, LOGIN_LIMIT)
+    consume_limit(db, "login-ip", ip_address, LOGIN_LIMIT)
+
     existing_user = db.query(UserDB).filter(
-        UserDB.email == str(user.email)
+        UserDB.email == email
     ).first()
 
     if (
@@ -84,18 +116,40 @@ def login_user(
 bearer_scheme = HTTPBearer()
 
 
-def get_current_user(
+def get_verified_claims(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-    db: Session = Depends(get_db)
 ):
     token = credentials.credentials
-
     try:
+        payload = verify_access_token(token)
+        return {"kind": "local", "claims": payload}
+    except (InvalidTokenError, RuntimeError, KeyError, TypeError, ValueError):
         try:
-            payload = verify_access_token(token)
+            return {"kind": "supabase", "claims": verify_supabase_access_token(token)}
+        except (
+            InvalidTokenError,
+            PyJWKClientError,
+            RuntimeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+
+def get_current_user(
+    verified: dict = Depends(get_verified_claims),
+    db: Session = Depends(get_db),
+):
+    payload = verified["claims"]
+    try:
+        if verified["kind"] == "local":
             user_id = int(payload["sub"])
-        except (InvalidTokenError, PyJWKClientError, RuntimeError, KeyError, TypeError, ValueError):
-            payload = verify_supabase_access_token(token)
+        else:
             auth_user_id = str(payload["sub"])
             email = payload.get("email")
             if not email:
@@ -139,7 +193,39 @@ def get_current_user(
 
     return user
 
-@router.get("/me", response_model=UserResponse)
+
+def enforce_user_rate_limit(
+    request: Request,
+    response: Response,
+    verified: dict = Depends(get_verified_claims),
+    db: Session = Depends(get_db),
+):
+    subject = verified["claims"].get("sub")
+    if not subject:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    is_read = request.method in {"GET", "HEAD"}
+    limit = READ_LIMIT if is_read else WRITE_LIMIT
+    scope = "database-read" if is_read else "database-write"
+    remaining, retry_after = consume_limit(
+        db,
+        scope,
+        f"{verified['kind']}:{subject}",
+        limit,
+    )
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset-After"] = str(retry_after)
+
+
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    dependencies=[Depends(enforce_user_rate_limit)],
+)
 def read_current_user(
     current_user: UserDB = Depends(get_current_user)
 ):

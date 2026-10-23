@@ -30,6 +30,16 @@ class UserDB(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class RateLimitDB(Base):
+    """Shared rate-limit counters so limits survive serverless cold starts."""
+
+    __tablename__ = "api_rate_limits"
+
+    key_hash = Column(String(64), primary_key=True)
+    window_started_at = Column(DateTime, nullable=False)
+    request_count = Column(Integer, nullable=False, default=0)
+
+
 class ProjectMemberDB(Base):
     __tablename__ = "project_members"
 

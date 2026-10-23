@@ -5,11 +5,12 @@ from sqlalchemy import func, case
 from database import get_db
 from models import TaskDB, ProjectDB, ProjectMemberDB, UserDB
 from schemas import TaskCreate, TaskResponse, TaskStatusUpdate, TaskUpdate
-from routers.auth import get_current_user
+from routers.auth import enforce_user_rate_limit, get_current_user
 
 router = APIRouter(
     prefix="/projects",
     tags=["Tasks"],
+    dependencies=[Depends(enforce_user_rate_limit)],
 )
 
 
