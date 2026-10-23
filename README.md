@@ -1,5 +1,7 @@
 # TeamCollab deployment
 
+Live website: [team-collab-theta.vercel.app](https://team-collab-theta.vercel.app)
+
 ## Deploy the frontend and API
 
 Create two Vercel projects from this repository, using `frontend` as the frontend project's Root Directory and `backend` as the API project's Root Directory. Vercel detects Vite and the FastAPI `app` in `main.py`; the backend project serves the whole API through that single Python function, while the frontend builds to static files and uses no serverless functions. Add `VITE_API_BASE_URL` to the frontend project with the backend deployment URL (for example, `https://your-api.vercel.app`). Add `DATABASE_URL`, `JWT_SECRET_KEY`, `SUPABASE_URL`, and `SUPABASE_PUBLISHABLE_KEY` to the backend project; set `CORS_ORIGINS` to a comma-separated list of exact frontend origins, including any preview domains you plan to use. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` to the frontend project. Set Vercel project environment variables in the dashboard or CLI; the checked-in `.env.example` files contain placeholders only.
