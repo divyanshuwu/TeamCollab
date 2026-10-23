@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from routers.auth import router as auth_router
 from routers.members import router as members_router
@@ -8,8 +10,12 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "https://team-collab-theta.vercel.app",
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,https://team-collab-theta.vercel.app",
+        ).split(",")
+        if origin.strip()
     ],
     allow_credentials=True,
     allow_methods=["*"],

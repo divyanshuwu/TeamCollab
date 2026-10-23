@@ -1,5 +1,6 @@
 import { apiRequest } from './api/client'
 import { useState, useEffect } from 'react'
+import { supabase } from './utils/supabase'
 import './App.css'
 import Auth from './Auth'
 
@@ -38,16 +39,6 @@ function App() {
     in_progress: 0,
     done: 0,
   })
-
-  async function loadProjects() {
-    try {
-      const data = await apiRequest('/projects/')
-      setProjects(data)
-      await loadTaskStats(data)
-    } catch (error) {
-      console.error('Failed to load projects:', error)
-    }
-  }
 
   async function loadTasks(projectList) {
     setTasksLoading(true)
@@ -188,7 +179,7 @@ async function addTeamMember(e) {
         )
       )
 
-      await loadTaskStats(projects)
+      await loadTaskStats()
     } catch (error) {
       alert(`Failed to delete task: ${error.message}`)
     }
@@ -230,27 +221,14 @@ async function addTeamMember(e) {
     }
   }
 
-  async function loadTaskStats(projectList) {
-  try {
-    const summaries = await Promise.all(
-      projectList.map((project) =>
-        apiRequest(`/projects/${project.id}/tasks/summary`)
-      )
-    )
-
-    setTaskStats({
-        total: summaries.reduce(
-          (sum, item) => sum + item.total, 0
-        ),
-        todo: summaries.reduce(
-          (sum, item) => sum + item.todo, 0
-        ),
-        in_progress: summaries.reduce(
-          (sum, item) => sum + item.in_progress, 0
-        ),
-        done: summaries.reduce(
-          (sum, item) => sum + item.done, 0
-        ),
+  async function loadTaskStats() {
+    try {
+      const summary = await apiRequest('/projects/summary')
+      setTaskStats({
+        total: summary.total_tasks,
+        todo: summary.todo,
+        in_progress: summary.in_progress,
+        done: summary.done,
       })
     } catch (error) {
       console.error('Failed to load task statistics:', error)
@@ -258,25 +236,44 @@ async function addTeamMember(e) {
   }
 
   useEffect(() => {
-    if (user) {
-      loadProjects()
+    if (!user) return undefined
+    let cancelled = false
+
+    async function fetchDashboard() {
+      try {
+        const [projectData, summary] = await Promise.all([
+          apiRequest('/projects/'),
+          apiRequest('/projects/summary'),
+        ])
+        if (cancelled) return
+        setProjects(projectData)
+        setTaskStats({
+          total: summary.total_tasks,
+          todo: summary.todo,
+          in_progress: summary.in_progress,
+          done: summary.done,
+        })
+      } catch (error) {
+        if (!cancelled) console.error('Failed to load dashboard:', error)
+      }
     }
+
+    void fetchDashboard()
+    return () => { cancelled = true }
   }, [user])
 
   useEffect(() => {
     async function restoreSession() {
-      const token = localStorage.getItem('access_token')
-
-      if (!token) {
-        setAuthLoading(false)
-        return
-      }
-
       try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const legacyToken = localStorage.getItem('access_token')
+        if (!session && !legacyToken) return
+
         const currentUser = await apiRequest('/auth/me')
         setUser(currentUser)
       } catch {
         localStorage.removeItem('access_token')
+        await supabase.auth.signOut()
         setUser(null)
       } finally {
         setAuthLoading(false)
@@ -287,17 +284,59 @@ async function addTeamMember(e) {
   }, [])
 
   useEffect(() => {
-    if (user && activePage === 'My Tasks') {
-      loadTasks(projects)
+    if (!user || activePage !== 'My Tasks') return undefined
+    let cancelled = false
+
+    async function fetchTasks() {
+      try {
+        const taskLists = await Promise.all(
+          projects.map(async (project) => {
+            const projectTasks = await apiRequest(`/projects/${project.id}/tasks/`)
+            return projectTasks.map((task) => ({ ...task, project_name: project.name }))
+          })
+        )
+        if (!cancelled) setTasks(taskLists.flat())
+      } catch (error) {
+        if (!cancelled) console.error('Failed to load tasks:', error)
+      } finally {
+        if (!cancelled) setTasksLoading(false)
+      }
     }
+
+    void fetchTasks()
+    return () => { cancelled = true }
   }, [user, activePage, projects])
 
+  useEffect(() => {
+    if (!user || activePage !== 'Team Members') return undefined
+    let cancelled = false
 
-useEffect(() => {
-  if (user && activePage === 'Team Members') {
-    loadTeamMembers(projects)
-  }
-}, [user, activePage, projects])
+    async function fetchMembers() {
+      try {
+        const memberLists = await Promise.all(
+          projects.map(async (project) => {
+            const members = await apiRequest(`/projects/${project.id}/members`)
+            return members.map((member) => ({
+              ...member,
+              project_id: project.id,
+              project_name: project.name,
+            }))
+          })
+        )
+        if (!cancelled) setTeamMembers(memberLists.flat())
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to load team members:', error)
+          setTeamMembers([])
+        }
+      } finally {
+        if (!cancelled) setMembersLoading(false)
+      }
+    }
+
+    void fetchMembers()
+    return () => { cancelled = true }
+  }, [user, activePage, projects])
 
   if (authLoading) {
     return <div className="auth-page">Loading TeamCollab...</div>
@@ -341,6 +380,7 @@ useEffect(() => {
             className={`nav-item ${activePage === 'My Tasks' ? 'active' : ''}`}
             onClick={(e) => {
               e.preventDefault()
+              setTasksLoading(true)
               setActivePage('My Tasks')
             }}
           >
@@ -352,6 +392,7 @@ useEffect(() => {
             className={`nav-item ${activePage === 'Team Members' ? 'active' : ''}`}
             onClick={(e) => {
               e.preventDefault()
+              setMembersLoading(true)
               setActivePage('Team Members')
             }}
           >
@@ -374,7 +415,16 @@ useEffect(() => {
               <p>Welcome back! Here's what's happening with your team.</p>
             </div>
 
-            <button className="profile-button">My Profile</button>
+            <button
+              className="profile-button"
+              onClick={async () => {
+                await supabase.auth.signOut()
+                localStorage.removeItem('access_token')
+                setUser(null)
+              }}
+            >
+              Sign out
+            </button>
           </header>
           {showForm && (
             <form

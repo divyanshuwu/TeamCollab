@@ -1,9 +1,10 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import case, func
 
 from database import get_db
-from models import ProjectDB, UserDB
+from models import ProjectDB, TaskDB, UserDB
 from schemas import ProjectCreate, ProjectResponse
 from routers.auth import get_current_user
 
@@ -43,6 +44,30 @@ def get_projects(
         .filter(ProjectDB.owner_id == current_user.id)
         .all()
     )
+
+
+@router.get("/summary")
+def get_owned_task_summary(
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    result = (
+        db.query(
+            func.count(TaskDB.id).label("total_tasks"),
+            func.coalesce(func.sum(case((TaskDB.status == "todo", 1), else_=0)), 0).label("todo"),
+            func.coalesce(func.sum(case((TaskDB.status == "in_progress", 1), else_=0)), 0).label("in_progress"),
+            func.coalesce(func.sum(case((TaskDB.status == "done", 1), else_=0)), 0).label("done"),
+        )
+        .join(ProjectDB, ProjectDB.id == TaskDB.project_id)
+        .filter(ProjectDB.owner_id == current_user.id)
+        .one()
+    )
+    return {
+        "total_tasks": result.total_tasks,
+        "todo": result.todo,
+        "in_progress": result.in_progress,
+        "done": result.done,
+    }
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

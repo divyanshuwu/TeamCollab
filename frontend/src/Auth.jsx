@@ -1,6 +1,6 @@
-
 import { useState } from 'react'
 import { apiRequest } from './api/client'
+import { supabase } from './utils/supabase'
 
 function Auth({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false)
@@ -8,38 +8,40 @@ function Auth({ onLogin }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(false)
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSubmit(event) {
+    event.preventDefault()
     setError('')
+    setNotice('')
     setLoading(true)
 
     try {
       if (isRegister) {
-        await apiRequest('/auth/register', {
-          method: 'POST',
-          body: JSON.stringify({ name, email, password }),
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { name } },
         })
+
+        if (signUpError) throw signUpError
+        if (!data.session) {
+          setNotice('Check your email to confirm your account, then sign in.')
+          return
+        }
+      } else {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+        if (signInError) throw signInError
       }
-
-      const data = await apiRequest('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      })
-
-      if (!data.access_token) {
-        throw new Error('Login succeeded, but no access token was returned.')
-      }
-
-      localStorage.setItem('access_token', data.access_token)
 
       const user = await apiRequest('/auth/me')
-
       onLogin(user)
-    } catch (err) {
-      localStorage.removeItem('access_token')
-      setError(err.message || 'Something went wrong. Please try again.')
+    } catch (submitError) {
+      setError(submitError.message || 'Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -49,9 +51,7 @@ function Auth({ onLogin }) {
     <div className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
         <h1>TeamCollab</h1>
-
         <h2>{isRegister ? 'Create your account' : 'Welcome back'}</h2>
-
         <p>
           {isRegister
             ? 'Create an account to start collaborating.'
@@ -64,7 +64,7 @@ function Auth({ onLogin }) {
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(event) => setName(event.target.value)}
               placeholder="Enter your name"
               autoComplete="name"
               required
@@ -77,7 +77,7 @@ function Auth({ onLogin }) {
           <input
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(event) => setEmail(event.target.value)}
             placeholder="you@example.com"
             autoComplete="email"
             required
@@ -89,14 +89,15 @@ function Auth({ onLogin }) {
           <input
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
             placeholder="Enter your password"
             autoComplete={isRegister ? 'new-password' : 'current-password'}
             required
           />
         </label>
 
-        {error && <div className="auth-error">{error}</div>}
+        {notice && <div role="status">{notice}</div>}
+        {error && <div className="auth-error" role="alert">{error}</div>}
 
         <button className="auth-submit" type="submit" disabled={loading}>
           {loading
@@ -108,12 +109,12 @@ function Auth({ onLogin }) {
 
         <div className="auth-switch">
           {isRegister ? 'Already have an account?' : "Don't have an account?"}
-
           <button
             type="button"
             onClick={() => {
-              setIsRegister(!isRegister)
+              setIsRegister((current) => !current)
               setError('')
+              setNotice('')
             }}
           >
             {isRegister ? 'Sign in' : 'Register'}

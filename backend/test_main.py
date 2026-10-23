@@ -4,19 +4,20 @@ from security import verify_password
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
 from main import app
-from database import Base, database_url, get_db
+from database import Base, get_db
 import models
 
 
-# Create a separate engine for automated tests
-test_database_url = database_url.set(
-    database="teamcollab_tests"
+# Use an isolated in-memory database so tests never need a configured service.
+test_engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
-
-test_engine = create_engine(test_database_url)
 
 TestSessionLocal = sessionmaker(
     autocommit=False,
@@ -1474,3 +1475,39 @@ def test_remove_member_loses_task_access():
         headers=member_headers,
     )
     assert after_removal.status_code == 403
+
+
+def teardown_module():
+    client.close()
+    test_engine.dispose()
+
+
+
+def test_supabase_auth_identity_is_linked_to_application_user():
+    from unittest.mock import patch
+
+    auth_user_id = f"auth-{uuid4().hex}"
+    email = f"supabase_{uuid4().hex[:8]}@example.com"
+    claims = {
+        "sub": auth_user_id,
+        "email": email,
+        "user_metadata": {"name": "Supabase User"},
+    }
+    with patch("routers.auth.verify_supabase_access_token", return_value=claims):
+        response = client.get(
+            "/auth/me",
+            headers={"Authorization": "Bearer supabase-test-token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == email
+    assert response.json()["name"] == "Supabase User"
+
+    db = TestSessionLocal()
+    try:
+        user = db.query(UserDB).filter(UserDB.auth_user_id == auth_user_id).first()
+        assert user is not None
+        assert user.email == email
+        assert user.password_hash == "$supabase$"
+    finally:
+        db.close()
