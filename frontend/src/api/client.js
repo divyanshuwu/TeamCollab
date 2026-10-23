@@ -4,8 +4,16 @@ const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 export async function apiRequest(path, options = {}) {
-  const { data: { session } } = await supabase.auth.getSession()
-  const token = session?.access_token || localStorage.getItem('access_token')
+  let sessionToken = null
+  if (supabase) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      sessionToken = session?.access_token || null
+    } catch {
+      // A broken Supabase Auth endpoint must not block API-backed fallback auth.
+    }
+  }
+  const token = localStorage.getItem('access_token') || sessionToken
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -22,9 +30,11 @@ export async function apiRequest(path, options = {}) {
     const message =
       data?.detail || `Request failed with status ${response.status}`
 
-    throw new Error(
+    const error = new Error(
       typeof message === 'string' ? message : JSON.stringify(message)
     )
+    error.status = response.status
+    throw error
   }
 
   return data

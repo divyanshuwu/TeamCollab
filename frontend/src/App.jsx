@@ -265,7 +265,15 @@ async function addTeamMember(e) {
   useEffect(() => {
     async function restoreSession() {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
+        let session = null
+        try {
+          if (supabase) {
+            const result = await supabase.auth.getSession()
+            session = result.data.session
+          }
+        } catch {
+          // Continue with the API token saved by the Aiven fallback login.
+        }
         const legacyToken = localStorage.getItem('access_token')
         if (!session && !legacyToken) return
 
@@ -273,7 +281,11 @@ async function addTeamMember(e) {
         setUser(currentUser)
       } catch {
         localStorage.removeItem('access_token')
-        await supabase.auth.signOut()
+        try {
+          await supabase?.auth.signOut()
+        } catch {
+          // The app can still clear its local session while Supabase is offline.
+        }
         setUser(null)
       } finally {
         setAuthLoading(false)
@@ -418,8 +430,12 @@ async function addTeamMember(e) {
             <button
               className="profile-button"
               onClick={async () => {
-                await supabase.auth.signOut()
                 localStorage.removeItem('access_token')
+                try {
+                  await supabase?.auth.signOut()
+                } catch {
+                  // Signing out locally must not depend on Supabase availability.
+                }
                 setUser(null)
               }}
             >

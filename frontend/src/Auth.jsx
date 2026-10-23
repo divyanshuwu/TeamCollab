@@ -2,6 +2,17 @@ import { useState } from 'react'
 import { apiRequest } from './api/client'
 import { supabase } from './utils/supabase'
 
+function isSupabaseUnavailable(error) {
+  const status = Number(error?.status || error?.context?.status || 0)
+  const message = `${error?.name || ''} ${error?.message || ''} ${error?.cause?.message || ''}`
+  const responseStatus = Number(message.match(/status\s+(\d{3})/i)?.[1] || 0)
+  return (
+    status >= 500 ||
+    responseStatus >= 500 ||
+    /AuthRetryableFetchError|network|fetch failed|failed to fetch|name_not_resolved|err_name_not_resolved|dns|timeout/i.test(message)
+  )
+}
+
 function Auth({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false)
   const [name, setName] = useState('')
@@ -18,33 +29,70 @@ function Auth({ onLogin }) {
     setLoading(true)
 
     try {
-      if (isRegister) {
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { name } },
-        })
+      if (supabase) {
+        try {
+          if (isRegister) {
+            const { data, error: signUpError } = await supabase.auth.signUp({
+              email,
+              password,
+              options: { data: { name } },
+            })
 
-        if (signUpError) throw signUpError
-        if (!data.session) {
-          setNotice('Check your email to confirm your account, then sign in.')
+            if (signUpError) throw signUpError
+            if (!data.session) {
+              setNotice('Check your email to confirm your account, then sign in.')
+              return
+            }
+          } else {
+            const { error: signInError } = await supabase.auth.signInWithPassword({
+              email,
+              password,
+            })
+            if (signInError) throw signInError
+          }
+        } catch (authError) {
+          if (!isSupabaseUnavailable(authError)) throw authError
+          await runAivenFallback()
           return
         }
+        localStorage.removeItem('access_token')
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-        if (signInError) throw signInError
+        await runAivenFallback()
+        return
       }
 
-      const user = await apiRequest('/auth/me')
-      onLogin(user)
+      try {
+        onLogin(await apiRequest('/auth/me'))
+      } catch (apiError) {
+        if (!supabase || !isSupabaseUnavailable(apiError)) throw apiError
+        await runAivenFallback()
+      }
     } catch (submitError) {
       setError(submitError.message || 'Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
+  }
+
+  async function runAivenFallback() {
+    if (isRegister) {
+      await apiRequest('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ name, email, password }),
+      })
+    }
+
+    const { access_token: accessToken } = await apiRequest('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    })
+    localStorage.setItem('access_token', accessToken)
+    try {
+      await supabase?.auth.signOut()
+    } catch {
+      // Keep the backup token even if the Supabase endpoint is still unavailable.
+    }
+    onLogin(await apiRequest('/auth/me'))
   }
 
   return (
